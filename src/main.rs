@@ -1,7 +1,8 @@
 use blockfrost::{load, BlockFrostApi, IpfsApi, IpfsSettings};
 use serde::Deserialize;
+use std::hash::Hasher;
 use std::{
-    collections::HashSet,
+    collections::{hash_map::DefaultHasher, HashSet},
     fs::{self},
     num::ParseIntError,
     path::Path,
@@ -29,6 +30,8 @@ async fn main() -> Result<(), String> {
 
     let collection_ids = collections().await?;
 
+    let mut image_hashes = HashSet::new();
+
     let policy_id = "1ec6e39b4eb6cfd8054d99c5870a2b37f65bea49b78a30c6038ec572";
     if collection_ids.contains(policy_id) {
         let mut assets = api
@@ -50,18 +53,32 @@ async fn main() -> Result<(), String> {
                         .map_err(|err| err.to_string())?;
                     println!("{:#?}", asset_details);
                     let o_path = asset_details.onchain_metadata.and_then(|json| {
-                        let data = json.get("data");
-                        let path = data.and_then(|path| path.as_str().map(|str| str.to_string()));
+                        let path = json["files"][0]["src"].as_str().map(|str| str.to_string());
                         return path;
                     });
                     match o_path {
                         Some(path) => {
-                            let asset_data =
-                                ipfs.gateway(&path).await.map_err(|err| err.to_string())?;
-                            let temp_filename = asset.asset.clone() + ".tmp";
-                            fs::write(&temp_filename, asset_data).map_err(|err| err.to_string())?;
-                            fs::rename(&temp_filename, &asset.asset)
+                            //drop the "ipfs://" from the path
+                            let mut ipfs_id: String = path.clone();
+                            ipfs_id.drain(0..7);
+
+                            let asset_data = ipfs
+                                .gateway(&ipfs_id)
+                                .await
                                 .map_err(|err| err.to_string())?;
+
+                            let temp_filename = asset.asset.clone() + ".tmp";
+
+                            //skip writting if we already have the image ()
+                            let hash = calculate_hash(&asset_data);
+                            if !(image_hashes.contains(&hash)) {
+                                //write the data to a temp file and rename to
+                                fs::write(&temp_filename, asset_data)
+                                    .map_err(|err| err.to_string())?;
+                                fs::rename(&temp_filename, &asset.asset)
+                                    .map_err(|err| err.to_string())?;
+                                image_hashes.insert(hash);
+                            }
                         }
                         None => {}
                     }
@@ -73,6 +90,12 @@ async fn main() -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn calculate_hash(t: &Vec<u8>) -> u64 {
+    let mut s = DefaultHasher::new();
+    s.write(t);
+    return s.finish();
 }
 
 #[derive(Debug, Deserialize)]
