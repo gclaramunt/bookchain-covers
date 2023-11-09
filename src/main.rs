@@ -51,9 +51,9 @@ async fn main() -> Result<(), String> {
         .and_then(|max| max.parse::<u32>().ok())
         .unwrap_or(10);
 
-    let api = build_bf_api().map_err(|err| err.to_string())?;
+    let api = build_bf_api().unwrap();
 
-    let ipfs = build_bf_ipfs().map_err(|err| err.to_string())?;
+    let ipfs = build_bf_ipfs().unwrap();
 
     let config = Config {
         api: &api,
@@ -159,7 +159,6 @@ async fn fetch_files<'a>(
 fn calculate_cid(t: &Vec<u8>) -> String {
     let mut s = Sha256::new();
     s.update(t);
-    //let hash = s.finalize()[..];
     return String::from_utf8_lossy(&s.finalize()[..]).to_string();
 }
 
