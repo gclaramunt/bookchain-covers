@@ -61,8 +61,6 @@ async fn main() -> Result<(), String> {
         work_dir: &work_dir,
     };
 
-    println!("work dir {:#?}", work_dir);
-
     let collection_ids = collections().await?;
 
     let mut file_hashes: HashSet<String> = HashSet::new();
