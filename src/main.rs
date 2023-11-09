@@ -1,9 +1,9 @@
 use blockfrost::{load, AssetPolicy, BlockFrostApi, IpfsApi, IpfsSettings};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use std::env;
-use std::hash::Hasher;
 use std::{
-    collections::{hash_map::DefaultHasher, HashSet},
+    collections::HashSet,
     fs::{self},
     path::Path,
 };
@@ -65,7 +65,7 @@ async fn main() -> Result<(), String> {
 
     let collection_ids = collections().await?;
 
-    let mut file_hashes: HashSet<u64> = HashSet::new();
+    let mut file_hashes: HashSet<String> = HashSet::new();
 
     if collection_ids.contains(policy_id) {
         let mut file_count: u32 = 0;
@@ -94,14 +94,14 @@ async fn main() -> Result<(), String> {
 
 async fn fetch_files<'a>(
     cfg: &Config<'a>,
-    file_hashes: &mut HashSet<u64>,
+    file_hashes: &mut HashSet<String>,
     assets: &Vec<AssetPolicy>,
     files_needed: u32,
 ) -> u32 {
     let mut found_files = 0;
     for asset in assets {
         let temp_filename = cfg.work_dir.to_owned() + "/" + &asset.asset + ".tmp";
-        let final_filename = cfg.work_dir.to_owned() + "/" + &asset.asset;
+        let filename = cfg.work_dir.to_owned() + "/" + &asset.asset;
 
         let qty: i32 = asset.quantity.parse().unwrap();
 
@@ -111,10 +111,9 @@ async fn fetch_files<'a>(
         };
 
         if qty > 0 {
-            if !Path::new(&final_filename).exists() {
+            if !Path::new(&filename).exists() {
                 let asset_details = cfg.api.assets_by_id(&asset.asset).await.unwrap();
-                let o_path = get_high_res_cover_path(asset_details);
-                match o_path {
+                match get_high_res_cover_path(asset_details) {
                     Some(path) => {
                         //drop the "ipfs://" from the path
                         let mut cid: String = path.clone();
@@ -122,14 +121,13 @@ async fn fetch_files<'a>(
 
                         let asset_data = cfg.ipfs.gateway(&cid).await.unwrap();
 
-                        //skip writting if we already have the image ()
-                        let hash = calculate_hash(&asset_data);
-                        if !(file_hashes.contains(&hash)) {
-                            //write the data to a temp file and rename to
+                        //skip writting if we already have the image
+                        if !(file_hashes.contains(cid.as_str())) {
+                            //write the data to a temp file and rename to final name
                             fs::write(&temp_filename, asset_data)
-                                .and_then(|_| fs::rename(&temp_filename, &final_filename))
+                                .and_then(|_| fs::rename(&temp_filename, &filename))
                                 .unwrap();
-                            file_hashes.insert(hash);
+                            file_hashes.insert(cid.to_string());
                             found_files += 1;
                         } else {
                             println!(
@@ -146,8 +144,8 @@ async fn fetch_files<'a>(
                 println!("Asset {:#?} already downloaded", asset.asset);
 
                 //calculate the hash so we don't download it again under a different name
-                let file_data = fs::read(final_filename).unwrap();
-                let hash = calculate_hash(&file_data);
+                let file_data = fs::read(filename).unwrap();
+                let hash = calculate_cid(&file_data);
                 file_hashes.insert(hash);
 
                 found_files += 1;
@@ -155,6 +153,14 @@ async fn fetch_files<'a>(
         }
     }
     return found_files;
+}
+
+//hash using the same
+fn calculate_cid(t: &Vec<u8>) -> String {
+    let mut s = Sha256::new();
+    s.update(t);
+    //let hash = s.finalize()[..];
+    return String::from_utf8_lossy(&s.finalize()[..]).to_string();
 }
 
 fn get_high_res_cover_path(asset_details: blockfrost::AssetDetails) -> Option<String> {
@@ -167,12 +173,6 @@ fn get_high_res_cover_path(asset_details: blockfrost::AssetDetails) -> Option<St
         return path;
     });
     o_path
-}
-
-fn calculate_hash(t: &Vec<u8>) -> u64 {
-    let mut s = DefaultHasher::new();
-    s.write(t);
-    return s.finish();
 }
 
 //structs representing the json response
