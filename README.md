@@ -23,11 +23,12 @@ After building, the code can be run with `book_cli <parameters>` (e.g. `target/d
 
 ### Parameters
 
-Usage: `book_cli <policy_id> <work_dir>? <total_files>?`
+Usage: `book_cli <policy_id> <work_dir>? <total_files>? <ipfs_gateway>?`
 
 * policy_id (mandatory): policy id of the asset
 * work_dir (optional): directory where to store the files (default: current directory)
 * total_files (optional): maximum number of files to download (default: 10)
+* ipfs http gateway (optional): url of the ipfs gateway (default: https://ipfs.io/ipfs/)
 
 ### Execution
 
