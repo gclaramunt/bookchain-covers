@@ -1,4 +1,5 @@
-use blockfrost::{load, AssetPolicy, BlockFrostApi, IpfsApi, IpfsSettings};
+use blockfrost::{load, AssetPolicy, BlockFrostApi};
+use bytes::Bytes;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::env;
@@ -15,16 +16,9 @@ fn build_bf_api() -> blockfrost::Result<BlockFrostApi> {
     Ok(api)
 }
 
-fn build_bf_ipfs() -> blockfrost::Result<IpfsApi> {
-    let configurations = load::configurations_from_env()?;
-    let project_id = configurations["ipfs_project_id"].as_str().unwrap();
-    let api = IpfsApi::new(project_id, IpfsSettings::new());
-    Ok(api)
-}
-
 struct Config<'a> {
     api: &'a BlockFrostApi,
-    ipfs: &'a IpfsApi,
+    ipfs_gateway: &'a str,
     work_dir: &'a str,
 }
 
@@ -41,6 +35,7 @@ async fn main() -> Result<(), String> {
         println!("\tpolicy_id (mandatory): policy id of the asset");
         println!("\twork_dir (optional): directory where to store the files (default: current directory)");
         println!("\ttotal_files (optional): maximum number of files to download (default: 10)");
+        println!("\tipfs http gateway (optional): url of the ipfs gateway (default: https://ipfs.io/ipfs/)");
 
         return Ok(());
     }
@@ -51,13 +46,16 @@ async fn main() -> Result<(), String> {
         .and_then(|max| max.parse::<u32>().ok())
         .unwrap_or(10);
 
-    let api = build_bf_api().unwrap();
+    let gateway: String = args
+        .get(4)
+        .unwrap_or(&"https://ipfs.io/ipfs/".to_string())
+        .to_string();
 
-    let ipfs = build_bf_ipfs().unwrap();
+    let api = build_bf_api().unwrap();
 
     let config = Config {
         api: &api,
-        ipfs: &ipfs,
+        ipfs_gateway: &gateway,
         work_dir: &work_dir,
     };
 
@@ -117,7 +115,8 @@ async fn fetch_files<'a>(
                         let mut cid: String = path.clone();
                         cid.drain(0..7);
 
-                        let asset_data = cfg.ipfs.gateway(&cid).await.unwrap();
+                        let url = cfg.ipfs_gateway.to_string() + &cid;
+                        let asset_data = fetch_cid(url).await.unwrap();
 
                         //skip writting if we already have the image
                         if !(file_hashes.contains(cid.as_str())) {
@@ -151,6 +150,12 @@ async fn fetch_files<'a>(
         }
     }
     return found_files;
+}
+
+//Download asset
+async fn fetch_cid(url: String) -> Result<Bytes, String> {
+    let content = reqwest::get(url).await.unwrap().bytes().await.unwrap();
+    Ok(content)
 }
 
 //hash using the same

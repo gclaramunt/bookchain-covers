@@ -9,12 +9,12 @@ Compile the code with `cargo build`.
 
 ## Configuration
 
-This utility uses blockfrost api for cardano and ipfs networks.
-You need to provide the project id for each one in `.blockfrost.toml` file.
+This utility uses blockfrost api for cardano networks access.
+You need to provide the project id  `.blockfrost.toml` file.
 E.g.
-```
+
+```toml
 project_id="<cardano project id>"
-ipfs_project_id="<ipfs project id>"
 ```
 
 ## Run
@@ -32,4 +32,4 @@ Usage: `book_cli <policy_id> <work_dir>? <total_files>?`
 ### Execution
 
 First the policy id is validated against the book.io collection, then the policy assets metadata is fetched from cardano through cloudfrost api.
-From the metadata, it extracts the ipfs CID of the cover image and if is not already present or the same image already exists, downloads it, repeating the process until the specified amount of images have been downloaded.
+From the metadata, it extracts the ipfs CID of the cover image and if is not already present or the same image already exists, downloads it from the ipfs network, repeating the process until the specified amount of images have been downloaded.
