@@ -40,7 +40,7 @@ async fn main() -> Result<(), String> {
         return Ok(());
     }
     let policy_id = &args[1];
-    let work_dir: String = args.get(2).unwrap_or(&".".to_string()).to_string();
+    let work_dir: String = args.get(2).unwrap_or(&".".to_owned()).to_owned();
     let max_files = args
         .get(3)
         .and_then(|max| max.parse::<u32>().ok())
@@ -48,8 +48,8 @@ async fn main() -> Result<(), String> {
 
     let gateway: String = args
         .get(4)
-        .unwrap_or(&"https://ipfs.io/ipfs/".to_string())
-        .to_string();
+        .unwrap_or(&"https://ipfs.io/ipfs/".to_owned())
+        .to_owned();
 
     let api = build_bf_api().unwrap();
 
@@ -115,7 +115,7 @@ async fn fetch_files<'a>(
                         let mut cid: String = path.clone();
                         cid.drain(0..7);
 
-                        let url = cfg.ipfs_gateway.to_string() + &cid;
+                        let url = cfg.ipfs_gateway.to_owned() + &cid;
                         let asset_data = fetch_cid(url).await.unwrap();
 
                         //skip writting if we already have the image
@@ -124,7 +124,7 @@ async fn fetch_files<'a>(
                             fs::write(&temp_filename, asset_data)
                                 .and_then(|_| fs::rename(&temp_filename, &filename))
                                 .unwrap();
-                            file_hashes.insert(cid.to_string());
+                            file_hashes.insert(cid.to_owned());
                             found_files += 1;
                         } else {
                             println!(
@@ -167,7 +167,7 @@ fn calculate_cid(t: &Vec<u8>) -> String {
 
 fn get_high_res_cover_path(asset_details: blockfrost::AssetDetails) -> Option<String> {
     let o_path = asset_details.onchain_metadata.and_then(|json| {
-        let path = json["files"][0]["src"].as_str().map(|str| str.to_string());
+        let path = json["files"][0]["src"].as_str().map(|str| str.to_owned());
         println!(
             "Found high-res cover for {:#?}",
             json["name"].as_str().unwrap_or("")
