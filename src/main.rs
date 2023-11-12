@@ -3,11 +3,14 @@ use bytes::Bytes;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::env;
+use std::error::Error;
 use std::{
     collections::HashSet,
     fs::{self},
     path::Path,
 };
+use tokio_retry::strategy::{jitter, ExponentialBackoff};
+use tokio_retry::Retry;
 
 fn build_bf_api() -> blockfrost::Result<BlockFrostApi> {
     let configurations = load::configurations_from_env()?;
@@ -23,7 +26,7 @@ struct Config<'a> {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), String> {
+async fn main() -> Result<(), Box<dyn Error>> {
     //number of files to process on each
     let chunk_size = 10;
 
@@ -40,7 +43,7 @@ async fn main() -> Result<(), String> {
         return Ok(());
     }
     let policy_id = &args[1];
-    let work_dir: String = args.get(2).unwrap_or(&".".to_owned()).to_owned();
+    let work_dir: String = args.get(2).unwrap_or(&String::from(".")).to_owned();
     let max_files = args
         .get(3)
         .and_then(|max| max.parse::<u32>().ok())
@@ -65,7 +68,7 @@ async fn main() -> Result<(), String> {
 
     if collection_ids.contains(policy_id) {
         let mut file_count: u32 = 0;
-        let assets = api.assets_policy_by_id(policy_id).await.unwrap();
+        let assets = api.assets_policy_by_id(policy_id).await?;
 
         let chunks = assets.chunks(chunk_size);
         for chunk in chunks {
@@ -75,7 +78,7 @@ async fn main() -> Result<(), String> {
                 &chunk.to_vec(),
                 max_files - file_count,
             )
-            .await;
+            .await?;
 
             if file_count >= max_files {
                 break;
@@ -93,13 +96,13 @@ async fn fetch_files<'a>(
     file_hashes: &mut HashSet<String>,
     assets: &Vec<AssetPolicy>,
     files_needed: u32,
-) -> u32 {
+) -> Result<u32, Box<dyn Error>> {
     let mut found_files = 0;
     for asset in assets {
         let temp_filename = cfg.work_dir.to_owned() + "/" + &asset.asset + ".tmp";
         let filename = cfg.work_dir.to_owned() + "/" + &asset.asset;
 
-        let qty: i32 = asset.quantity.parse().unwrap();
+        let qty: i32 = asset.quantity.parse()?;
 
         if found_files >= files_needed {
             //stop the iteration if we have enough files
@@ -108,7 +111,7 @@ async fn fetch_files<'a>(
 
         if qty > 0 {
             if !Path::new(&filename).exists() {
-                let asset_details = cfg.api.assets_by_id(&asset.asset).await.unwrap();
+                let asset_details = cfg.api.assets_by_id(&asset.asset).await?;
                 match get_high_res_cover_path(asset_details) {
                     Some(path) => {
                         //drop the "ipfs://" from the path
@@ -116,14 +119,13 @@ async fn fetch_files<'a>(
                         cid.drain(0..7);
 
                         let url = cfg.ipfs_gateway.to_owned() + &cid;
-                        let asset_data = fetch_cid(url).await.unwrap();
+                        let asset_data = fetch_cid(url).await?;
 
                         //skip writting if we already have the image
                         if !(file_hashes.contains(cid.as_str())) {
                             //write the data to a temp file and rename to final name
                             fs::write(&temp_filename, asset_data)
-                                .and_then(|_| fs::rename(&temp_filename, &filename))
-                                .unwrap();
+                                .and_then(|_| fs::rename(&temp_filename, &filename))?;
                             file_hashes.insert(cid.to_owned());
                             found_files += 1;
                         } else {
@@ -141,7 +143,7 @@ async fn fetch_files<'a>(
                 println!("Asset {:#?} already downloaded", asset.asset);
 
                 //calculate the hash so we don't download it again under a different name
-                let file_data = fs::read(filename).unwrap();
+                let file_data = fs::read(filename)?;
                 let hash = calculate_cid(&file_data);
                 file_hashes.insert(hash);
 
@@ -149,13 +151,18 @@ async fn fetch_files<'a>(
             }
         }
     }
-    return found_files;
+    return Ok(found_files);
 }
 
-//Download asset
-async fn fetch_cid(url: String) -> Result<Bytes, String> {
-    let content = reqwest::get(url).await.unwrap().bytes().await.unwrap();
-    Ok(content)
+async fn fetch_cid(url: String) -> Result<Bytes, reqwest::Error> {
+    let retry_strategy = ExponentialBackoff::from_millis(10)
+        .map(jitter) // add jitter to delays
+        .take(3); // limit to 3 retries
+    let content = Retry::spawn(retry_strategy, || reqwest::get(url.clone()))
+        .await?
+        .bytes()
+        .await;
+    content
 }
 
 //hash using the same
@@ -170,7 +177,7 @@ fn get_high_res_cover_path(asset_details: blockfrost::AssetDetails) -> Option<St
         let path = json["files"][0]["src"].as_str().map(|str| str.to_owned());
         println!(
             "Found high-res cover for {:#?}",
-            json["name"].as_str().unwrap_or("")
+            json["name"].as_str().unwrap_or("<Unknown>")
         );
         return path;
     });
@@ -193,18 +200,18 @@ struct DataEntry {
     network: String,
 }
 
-async fn collections() -> Result<HashSet<String>, String> {
+async fn collections() -> Result<HashSet<String>, reqwest::Error> {
     let client = reqwest::Client::new();
     //to policy_id set
     let request_url = "https://api.book.io/api/v0/collections";
 
     // Send the GET request
-    let response = client.get(request_url).send().await.unwrap();
+    let response = client.get(request_url).send().await?;
 
     // Check if the request was successful
     if response.status().is_success() {
         // Parse the JSON response into your struct
-        let parsed_data: CollectionsResponse = response.json().await.unwrap();
+        let parsed_data: CollectionsResponse = response.json().await?;
         let id_vec = parsed_data.data.iter().map(|de| de.collection_id.clone());
         let set_data: HashSet<String> = id_vec.into_iter().collect();
         return Ok(set_data);
