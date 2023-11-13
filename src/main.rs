@@ -12,6 +12,7 @@ use std::{
 use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use tokio_retry::Retry;
 
+/// build Blockfrost api from configuration
 fn build_bf_api() -> blockfrost::Result<BlockFrostApi> {
     let configurations = load::configurations_from_env()?;
     let project_id = configurations["project_id"].as_str().unwrap();
@@ -19,6 +20,7 @@ fn build_bf_api() -> blockfrost::Result<BlockFrostApi> {
     Ok(api)
 }
 
+// Simplifies passing around the configuration parameters
 struct Config<'a> {
     api: &'a BlockFrostApi,
     ipfs_gateway: &'a str,
@@ -42,13 +44,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         return Ok(());
     }
+
+    // load command line parameters, there's probably a rust crate that does it better
     let policy_id = &args[1];
     let work_dir: String = args.get(2).unwrap_or(&String::from(".")).to_owned();
     let max_files = args
         .get(3)
         .and_then(|max| max.parse::<u32>().ok())
         .unwrap_or(10);
-
     let gateway: String = args
         .get(4)
         .unwrap_or(&"https://ipfs.io/ipfs/".to_owned())
@@ -62,16 +65,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
         work_dir: &work_dir,
     };
 
+    //read collections from book.io
     let collection_ids = collections().await?;
 
+    //keep track of already processed files
     let mut file_hashes: HashSet<String> = HashSet::new();
 
     if collection_ids.contains(policy_id) {
         let mut file_count: u32 = 0;
+
+        //read the asset's policies and process them by chunks (so we can stop when we have enough files)
         let assets = api.assets_policy_by_id(policy_id).await?;
 
         let chunks = assets.chunks(chunk_size);
         for chunk in chunks {
+            //fetch the files for each chunk of policies
             file_count += fetch_files(
                 &config,
                 &mut file_hashes,
@@ -91,6 +99,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// fetch the files for a list of asset policies up to `files_needed` and
+/// checking if the file is already present by name (uses the policy id) or by content (uses the hash and checks `file_hashes` )
 async fn fetch_files<'a>(
     cfg: &Config<'a>,
     file_hashes: &mut HashSet<String>,
@@ -118,8 +128,9 @@ async fn fetch_files<'a>(
                         let mut cid: String = path.clone();
                         cid.drain(0..7);
 
+                        // download the high-res cover from ipfs network
                         let url = cfg.ipfs_gateway.to_owned() + &cid;
-                        let asset_data = fetch_cid(url).await?;
+                        let asset_data = download_binary(url).await?;
 
                         //skip writting if we already have the image
                         if !(file_hashes.contains(cid.as_str())) {
@@ -154,7 +165,8 @@ async fn fetch_files<'a>(
     return Ok(found_files);
 }
 
-async fn fetch_cid(url: String) -> Result<Bytes, reqwest::Error> {
+/// Downloads a binary file from an url with exponential backoff retry
+async fn download_binary(url: String) -> Result<Bytes, reqwest::Error> {
     let retry_strategy = ExponentialBackoff::from_millis(10)
         .map(jitter) // add jitter to delays
         .take(3); // limit to 3 retries
@@ -165,13 +177,14 @@ async fn fetch_cid(url: String) -> Result<Bytes, reqwest::Error> {
     content
 }
 
-//hash using the same
+///hash using sha2-256 (same as ipfs)
 fn calculate_cid(t: &Vec<u8>) -> String {
     let mut s = Sha256::new();
     s.update(t);
     return String::from_utf8_lossy(&s.finalize()[..]).to_string();
 }
 
+///Extracts the high-res cover path from the asset's onchain metadata
 fn get_high_res_cover_path(asset_details: blockfrost::AssetDetails) -> Option<String> {
     let o_path = asset_details.onchain_metadata.and_then(|json| {
         let path = json["files"][0]["src"].as_str().map(|str| str.to_owned());
@@ -184,7 +197,7 @@ fn get_high_res_cover_path(asset_details: blockfrost::AssetDetails) -> Option<St
     o_path
 }
 
-//structs representing the json response
+//structs representing book.io json response
 #[derive(Debug, Deserialize)]
 struct CollectionsResponse {
     #[serde(rename = "type")]
@@ -200,6 +213,7 @@ struct DataEntry {
     network: String,
 }
 
+/// Fetchs the full list of policies from book.io
 async fn collections() -> Result<HashSet<String>, reqwest::Error> {
     let client = reqwest::Client::new();
     //to policy_id set
