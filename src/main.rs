@@ -12,6 +12,8 @@ use std::{
 use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use tokio_retry::Retry;
 
+const BOOK_IO_COLLECTIONS_URL: &str = "https://api.book.io/api/v0/collections";
+
 /// build Blockfrost api from configuration
 fn build_bf_api() -> blockfrost::Result<BlockFrostApi> {
     let configurations = load::configurations_from_env()?;
@@ -57,7 +59,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .unwrap_or(&"https://ipfs.io/ipfs/".to_owned())
         .to_owned();
 
-    let api = build_bf_api().unwrap();
+    let api = build_bf_api()?;
 
     let config = Config {
         api: &api,
@@ -170,7 +172,7 @@ async fn download_binary(url: String) -> Result<Bytes, reqwest::Error> {
     let retry_strategy = ExponentialBackoff::from_millis(10)
         .map(jitter) // add jitter to delays
         .take(3); // limit to 3 retries
-    let content = Retry::spawn(retry_strategy, || reqwest::get(url.clone()))
+    let content = Retry::spawn(retry_strategy, || reqwest::get(url.to_owned()))
         .await?
         .bytes()
         .await;
@@ -217,10 +219,9 @@ struct DataEntry {
 async fn collections() -> Result<HashSet<String>, reqwest::Error> {
     let client = reqwest::Client::new();
     //to policy_id set
-    let request_url = "https://api.book.io/api/v0/collections";
 
     // Send the GET request
-    let response = client.get(request_url).send().await?;
+    let response = client.get(BOOK_IO_COLLECTIONS_URL).send().await?;
 
     // Check if the request was successful
     if response.status().is_success() {
